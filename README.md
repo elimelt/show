@@ -25,5 +25,14 @@ Stream any command’s stdout to a browser with accurate terminal rendering.
 
 Notes: Piped commands may disable color; use `--color=always`. For interactive TUIs, use `-pty`.
 
+## Examples
+- Interactive shell in the browser:
+  - `show -pty -input -- script -q -c "bash" | tee /dev/stdout`
+- TUI with keyboard input in browser:
+  - `show -pty -input -- btop`
+- Remote over SSH port forwarding:
+  - `ssh -L 8000:<hostname>:8000 <user>@<hostname>`
+  - On remote: `ps aux | show -p 8000 -host 0.0.0.0`
+
 ## Author
 Elijah Melton
