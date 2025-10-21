@@ -10,7 +10,9 @@ Stream any command’s stdout to a browser with accurate terminal rendering.
 
 ## Usage
 - Pipe and mirror to terminal: `ls --color=always -la | show -p 8000` → open `http://localhost:8000`
-- Interactive (PTY) mode: `show -pty -- btop`
+- Interactive (PTY) mode:
+  - Split args: `show -pty -- sudo cat`
+  - Single command string: `show -pty -- "sudo cat"`
 
 ## Flags
 - `-p` port (default 8000)
@@ -18,7 +20,8 @@ Stream any command’s stdout to a browser with accurate terminal rendering.
 - `-title` page title
 - `-history` replay bytes (default 16MB, 0 = unlimited)
 - `-version` print version and exit
-- `-pty` run a command under a PTY and mirror to terminal
+- `-pty` run a command under a PTY and mirror to terminal (accepts either split args or a single shell command string)
+- `-input` allow browser keyboard input (PTY mode)
 
 Notes: Piped commands may disable color; use `--color=always`. For interactive TUIs, use `-pty`.
 

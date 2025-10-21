@@ -81,7 +81,9 @@ func TestBacklogReplay(t *testing.T) {
 	srv := newStreamServer(1 << 20)
 	expect := []byte("hello world\n")
 	srv.append(expect)
-	ts := httptest.NewServer(newHandler(srv, "test"))
+    var in io.Writer
+    enable := new(bool)
+    ts := httptest.NewServer(newHandler(srv, "test", enable, &in))
 	defer ts.Close()
 	client := &http.Client{Timeout: 5 * time.Second}
 	got, done := readSSEChunks(t, client, ts.URL+"/stream", "", len(expect))
@@ -97,7 +99,9 @@ func TestResumeAfterID(t *testing.T) {
 	srv := newStreamServer(1 << 20)
 	srv.append([]byte("abc"))
 	srv.append([]byte("def"))
-	ts := httptest.NewServer(newHandler(srv, "test"))
+    var in io.Writer
+    enable := new(bool)
+    ts := httptest.NewServer(newHandler(srv, "test", enable, &in))
 	defer ts.Close()
 	client := &http.Client{Timeout: 5 * time.Second}
 	got, _ := readSSEChunks(t, client, ts.URL+"/stream", "3", 3)
@@ -109,7 +113,9 @@ func TestResumeAfterID(t *testing.T) {
 func TestRingBufferClamp(t *testing.T) {
 	srv := newStreamServer(5)
 	srv.append([]byte("1234567890"))
-	ts := httptest.NewServer(newHandler(srv, "test"))
+    var in io.Writer
+    enable := new(bool)
+    ts := httptest.NewServer(newHandler(srv, "test", enable, &in))
 	defer ts.Close()
 	client := &http.Client{Timeout: 5 * time.Second}
 	got, _ := readSSEChunks(t, client, ts.URL+"/stream", "3", 5)
@@ -122,7 +128,9 @@ func TestDoneOnConnect(t *testing.T) {
 	srv := newStreamServer(1 << 20)
 	srv.append([]byte("hi"))
 	srv.finish()
-	ts := httptest.NewServer(newHandler(srv, "test"))
+    var in io.Writer
+    enable := new(bool)
+    ts := httptest.NewServer(newHandler(srv, "test", enable, &in))
 	defer ts.Close()
 	client := &http.Client{Timeout: 5 * time.Second}
 	got, done := readSSEChunks(t, client, ts.URL+"/stream", "", 0)

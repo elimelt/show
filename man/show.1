@@ -10,6 +10,7 @@ show \- stream a terminal's stdout to the browser
 \ [\-title \fITITLE\fR]
 \ [\-history \fIBYTES\fR]
 \ [\-pty]
+\ [\-input]
 \ [\-version]
 .SH DESCRIPTION
 .B show
@@ -38,7 +39,12 @@ Print version and exit.
 .B \-pty
 Run a command under a pseudo\-terminal and mirror output to the local terminal
 while streaming to the browser. Use after options, followed by \fB--\fR and the
-command to run.
+command to run. You may pass either split arguments (e.g. \fBsudo cat\fR) or a
+single quoted shell command string (e.g. \fB"sudo cat"\fR).
+.TP
+.B \-input
+Allow keyboard input from the browser (POSTs to /input) to be sent to the PTY.
+Disabled by default. Only meaningful with \fB-pty\fR.
 .SH EXAMPLES
 .TP
 Stream a directory listing with colors:

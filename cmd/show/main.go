@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -139,19 +140,49 @@ type streamWriter struct{ s *streamServer }
 
 func (w streamWriter) Write(p []byte) (int, error) { w.s.append(p); return len(p), nil }
 
+type lockedWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (l *lockedWriter) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.w.Write(p)
+}
+
 type ptySession struct {
 	cmd  *exec.Cmd
 	f    *os.File
 	done chan struct{}
+	in   *lockedWriter
 }
 
-func newHandler(srv *streamServer, title string) http.Handler {
+func newHandler(srv *streamServer, title string, allowInput *bool, input *io.Writer) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
 		html := strings.ReplaceAll(indexHTML, "{{TITLE}}", htmlEscape(title))
+		enabled := "false"
+		if allowInput != nil && *allowInput && input != nil {
+			if *input != nil {
+				enabled = "true"
+			}
+		}
+		html = strings.ReplaceAll(html, "{{INPUT}}", enabled)
 		_, _ = w.Write([]byte(html))
+	})
+	mux.HandleFunc("/input", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || allowInput == nil || !*allowInput || input == nil || *input == nil {
+			http.NotFound(w, r)
+			return
+		}
+		b, _ := io.ReadAll(io.LimitReader(r.Body, 64))
+		if len(b) > 0 {
+			_, _ = (*input).Write(b)
+		}
+		w.WriteHeader(http.StatusNoContent)
 	})
 	mux.HandleFunc("/stream", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -250,6 +281,7 @@ func main() {
 	historyBytes := flag.Int64("history", 16<<20, "Max bytes to retain for replay; 0 = unlimited")
 	showVersion := flag.Bool("version", false, "Print version and exit")
 	ptyMode := flag.Bool("pty", false, "Run a command under a PTY and stream it")
+	allowInput := flag.Bool("input", false, "Allow browser keyboard input (PTY mode)")
 	flag.Parse()
 
 	if *showVersion {
@@ -263,14 +295,31 @@ func main() {
 	}
 	srv := newStreamServer(maxHist)
 
-	server := &http.Server{Addr: addr, Handler: newHandler(srv, *title), ReadHeaderTimeout: 5 * time.Second}
+	var input io.Writer
+	server := &http.Server{Addr: addr, Handler: newHandler(srv, *title, allowInput, &input), ReadHeaderTimeout: 5 * time.Second}
 	srvErr := make(chan error, 1)
-	go func() {
-		err := server.ListenAndServe()
-		if err != nil && err != http.ErrServerClosed {
-			srvErr <- err
+	// Listen on requested address; if it's loopback IPv4, also try loopback IPv6.
+	var listeners []net.Listener
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		log.Fatalf("listen: %v", err)
+	}
+	listeners = append(listeners, ln)
+	if *host == "127.0.0.1" || *host == "localhost" {
+		// Try IPv6 loopback on the same port.
+		v6 := fmt.Sprintf("[::1]:%d", *port)
+		if ln6, err := net.Listen("tcp", v6); err == nil {
+			listeners = append(listeners, ln6)
 		}
-		close(srvErr)
+	}
+	go func() {
+		for _, l := range listeners {
+			go func(li net.Listener) {
+				if err := server.Serve(li); err != nil && err != http.ErrServerClosed {
+					srvErr <- err
+				}
+			}(l)
+		}
 	}()
 
 	var sess *ptySession
@@ -284,6 +333,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("pty: %v", err)
 		}
+		input = sess.in
 	} else {
 		go func() {
 			reader := bufio.NewReader(os.Stdin)
@@ -318,18 +368,23 @@ func main() {
 
 // PTY integration for interactive commands.
 func startPTY(srv *streamServer, args []string) (*ptySession, error) {
-	c := exec.Command(args[0], args[1:]...)
+	var c *exec.Cmd
+	if len(args) == 1 {
+		c = exec.Command("/bin/sh", "-c", args[0])
+	} else {
+		c = exec.Command(args[0], args[1:]...)
+	}
 	if os.Getenv("TERM") == "" {
 		c.Env = append(os.Environ(), "TERM=xterm-256color")
 	} else {
 		c.Env = os.Environ()
 	}
-	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	f, err := pty.Start(c)
 	if err != nil {
 		return nil, err
 	}
-	s := &ptySession{cmd: c, f: f, done: make(chan struct{})}
+	lw := &lockedWriter{w: f}
+	s := &ptySession{cmd: c, f: f, done: make(chan struct{}), in: lw}
 
 	if isatty(os.Stdout.Fd()) {
 		if w, h, err := term.GetSize(int(os.Stdout.Fd())); err == nil {
@@ -353,7 +408,7 @@ func startPTY(srv *streamServer, args []string) (*ptySession, error) {
 		}
 	}
 
-	go func() { _, _ = io.Copy(f, os.Stdin) }()
+	go func() { _, _ = io.Copy(lw, os.Stdin) }()
 
 	mw := io.MultiWriter(os.Stdout, streamWriter{s: srv})
 	go func() {
@@ -446,6 +501,36 @@ const indexHTML = `<!doctype html>
           } catch (e) {}
         });
         es.addEventListener('done', () => { es.close(); });
+
+        const INPUT_ENABLED = {{INPUT}};
+        if (INPUT_ENABLED) {
+          const enc = new TextEncoder();
+          function send(bytes) { fetch('/input', { method: 'POST', body: bytes }).catch(() => {}); }
+          function ctrl(ch) { const c = ch.toUpperCase().charCodeAt(0) - 64; return (c >= 0 && c <= 31) ? c : null; }
+          function keyToBytes(ev) {
+            if (ev.ctrlKey && ev.key && ev.key.length === 1) {
+              const c = ctrl(ev.key);
+              if (c !== null) return new Uint8Array([c]);
+            }
+            switch (ev.key) {
+              case 'Enter': return enc.encode('\r');
+              case 'Backspace': return new Uint8Array([0x7f]);
+              case 'Tab': return enc.encode('\t');
+              case 'Escape': return new Uint8Array([0x1b]);
+              case 'ArrowUp': return enc.encode('\x1b[A');
+              case 'ArrowDown': return enc.encode('\x1b[B');
+              case 'ArrowRight': return enc.encode('\x1b[C');
+              case 'ArrowLeft': return enc.encode('\x1b[D');
+              default:
+                if (ev.key && ev.key.length === 1) return enc.encode(ev.key);
+            }
+            return null;
+          }
+          document.addEventListener('keydown', (ev) => {
+            const b = keyToBytes(ev);
+            if (b) { ev.preventDefault(); send(b); }
+          });
+        }
       })();
     </script>
   </body>
