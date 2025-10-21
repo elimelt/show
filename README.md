@@ -9,8 +9,8 @@ Stream any command’s stdout to a browser with accurate terminal rendering.
 - Linux: `curl -fsSL https://raw.githubusercontent.com/elimelt/show/main/install/linux.sh | sudo bash`
 
 ## Usage
-- `ls --color=always -la | show -p 8000` → open `http://localhost:8000`
-- `top -b | show`
+- Pipe and mirror to terminal: `ls --color=always -la | show -p 8000` → open `http://localhost:8000`
+- Interactive (PTY) mode: `show -pty -- btop`
 
 ## Flags
 - `-p` port (default 8000)
@@ -18,8 +18,9 @@ Stream any command’s stdout to a browser with accurate terminal rendering.
 - `-title` page title
 - `-history` replay bytes (default 16MB, 0 = unlimited)
 - `-version` print version and exit
+- `-pty` run a command under a PTY and mirror to terminal
 
-Notes: Some commands disable color when piped; use `--color=always`. Interactive TUIs may require batch/non-interactive modes for best results.
+Notes: Piped commands may disable color; use `--color=always`. For interactive TUIs, use `-pty`.
 
 ## Author
 Elijah Melton

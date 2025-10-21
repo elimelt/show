@@ -9,6 +9,7 @@ show \- stream a terminal's stdout to the browser
 \ [\-host \fIADDR\fR]
 \ [\-title \fITITLE\fR]
 \ [\-history \fIBYTES\fR]
+\ [\-pty]
 \ [\-version]
 .SH DESCRIPTION
 .B show
@@ -33,6 +34,11 @@ Maximum bytes of output retained for replay on connect or reconnect
 .TP
 .B \-version
 Print version and exit.
+.TP
+.B \-pty
+Run a command under a pseudo\-terminal and mirror output to the local terminal
+while streaming to the browser. Use after options, followed by \fB--\fR and the
+command to run.
 .SH EXAMPLES
 .TP
 Stream a directory listing with colors:
@@ -43,6 +49,12 @@ Stream a directory listing with colors:
 Stream a long\-running program in batch mode:
 .nf
     top -b | show -p 8000
+.fi
+.
+.TP
+Run an interactive TUI with PTY support:
+.nf
+    show -pty -- btop
 .fi
 Open http://localhost:8000 in a browser to view the output.
 .SH NOTES

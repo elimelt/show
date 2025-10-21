@@ -9,15 +9,22 @@ import (
 	"encoding/base64"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
+)
+
+import (
+	pty "github.com/creack/pty"
+	"golang.org/x/term"
 )
 
 type event struct {
@@ -128,6 +135,16 @@ func writeSSEChunk(w http.ResponseWriter, flusher http.Flusher, id int64, payloa
 
 var version = "dev"
 
+type streamWriter struct{ s *streamServer }
+
+func (w streamWriter) Write(p []byte) (int, error) { w.s.append(p); return len(p), nil }
+
+type ptySession struct {
+	cmd  *exec.Cmd
+	f    *os.File
+	done chan struct{}
+}
+
 func newHandler(srv *streamServer, title string) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -232,6 +249,7 @@ func main() {
 	title := flag.String("title", "show", "Page title")
 	historyBytes := flag.Int64("history", 16<<20, "Max bytes to retain for replay; 0 = unlimited")
 	showVersion := flag.Bool("version", false, "Print version and exit")
+	ptyMode := flag.Bool("pty", false, "Run a command under a PTY and stream it")
 	flag.Parse()
 
 	if *showVersion {
@@ -255,36 +273,103 @@ func main() {
 		close(srvErr)
 	}()
 
-	go func() {
-		reader := bufio.NewReader(os.Stdin)
-		buf := make([]byte, 4096)
-		for {
-			n, err := reader.Read(buf)
-			if n > 0 {
-				chunk := make([]byte, n)
-				copy(chunk, buf[:n])
-				srv.append(chunk)
-			}
-			if err != nil {
-				break
-			}
+	var sess *ptySession
+	if *ptyMode {
+		args := flag.Args()
+		if len(args) == 0 {
+			log.Fatalf("pty mode requires a command: show -pty -- <cmd> [args...]")
 		}
-		srv.finish()
-	}()
+		var err error
+		sess, err = startPTY(srv, args)
+		if err != nil {
+			log.Fatalf("pty: %v", err)
+		}
+	} else {
+		go func() {
+			reader := bufio.NewReader(os.Stdin)
+			mw := io.MultiWriter(os.Stdout, streamWriter{s: srv})
+			_, _ = io.CopyBuffer(mw, reader, make([]byte, 4096))
+			srv.finish()
+		}()
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	select {
 	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
-		_ = server.Shutdown(shutdownCtx)
+		if sess != nil && sess.cmd != nil && sess.cmd.Process != nil {
+			_ = sess.cmd.Process.Signal(syscall.SIGINT)
+		}
+		_ = server.Close()
+	case <-func() chan struct{} {
+		if sess != nil {
+			return sess.done
+		}
+		return make(chan struct{})
+	}():
+		_ = server.Close()
 	case err := <-srvErr:
 		if err != nil {
 			log.Fatalf("server error: %v", err)
 		}
 	}
+}
+
+// PTY integration for interactive commands.
+func startPTY(srv *streamServer, args []string) (*ptySession, error) {
+	c := exec.Command(args[0], args[1:]...)
+	if os.Getenv("TERM") == "" {
+		c.Env = append(os.Environ(), "TERM=xterm-256color")
+	} else {
+		c.Env = os.Environ()
+	}
+	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	f, err := pty.Start(c)
+	if err != nil {
+		return nil, err
+	}
+	s := &ptySession{cmd: c, f: f, done: make(chan struct{})}
+
+	if isatty(os.Stdout.Fd()) {
+		if w, h, err := term.GetSize(int(os.Stdout.Fd())); err == nil {
+			_ = pty.Setsize(f, &pty.Winsize{Cols: uint16(w), Rows: uint16(h)})
+		}
+		ch := make(chan os.Signal, 1)
+		signal.Notify(ch, syscall.SIGWINCH)
+		go func() {
+			for range ch {
+				if w, h, err := term.GetSize(int(os.Stdout.Fd())); err == nil {
+					_ = pty.Setsize(f, &pty.Winsize{Cols: uint16(w), Rows: uint16(h)})
+				}
+			}
+		}()
+	}
+
+	var oldState *term.State
+	if isatty(os.Stdin.Fd()) {
+		if st, err := term.MakeRaw(int(os.Stdin.Fd())); err == nil {
+			oldState = st
+		}
+	}
+
+	go func() { _, _ = io.Copy(f, os.Stdin) }()
+
+	mw := io.MultiWriter(os.Stdout, streamWriter{s: srv})
+	go func() {
+		_, _ = io.CopyBuffer(mw, f, make([]byte, 4096))
+		srv.finish()
+		if oldState != nil {
+			_ = term.Restore(int(os.Stdin.Fd()), oldState)
+		}
+		_ = f.Close()
+		close(s.done)
+	}()
+	return s, nil
+}
+
+func isatty(fd uintptr) bool {
+	return term.IsTerminal(int(fd))
 }
 
 func htmlEscape(s string) string {
@@ -308,6 +393,10 @@ const indexHTML = `<!doctype html>
     <style>
       html, body { height: 100%; margin: 0; background: #000; }
       #terminal { position: fixed; inset: 0; }
+      .xterm, .xterm * {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+          "Liberation Mono", "DejaVu Sans Mono", "Ubuntu Mono", "Courier New", monospace;
+      }
     </style>
   </head>
   <body>
@@ -319,7 +408,7 @@ const indexHTML = `<!doctype html>
       (function(){
         const term = new window.Terminal({
           cursorBlink: false,
-          convertEol: false,
+          convertEol: true,
           disableStdin: true,
           scrollback: 100000,
           theme: { background: '#000000' }
