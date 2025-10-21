@@ -5,8 +5,8 @@ Stream any command’s stdout to a browser with accurate terminal rendering.
 ## Install
 - Go: `go install github.com/elimelt/show/cmd/show@latest`
 - Homebrew (homebrew-core): planned
-- macOS: `curl -fsSL https://raw.githubusercontent.com/elimelt/show/main/install/macos.sh | bash`
-- Linux: `curl -fsSL https://raw.githubusercontent.com/elimelt/show/main/install/linux.sh | bash`
+- macOS: `curl -fsSL https://raw.githubusercontent.com/elimelt/show/main/install/macos.sh | sudo bash`
+- Linux: `curl -fsSL https://raw.githubusercontent.com/elimelt/show/main/install/linux.sh | sudo bash`
 
 ## Usage
 - `ls --color=always -la | show -p 8000` → open `http://localhost:8000`
