@@ -1,0 +1,55 @@
+.TH show 1 "October 2025" "show" "User Commands"
+.SH NAME
+show \- stream a terminal's stdout to the browser
+.SH SYNOPSIS
+.B <command>
+\|\|\| 
+.B show
+\ [\-p \fIPORT\fR]
+\ [\-host \fIADDR\fR]
+\ [\-title \fITITLE\fR]
+\ [\-history \fIBYTES\fR]
+\ [\-version]
+.SH DESCRIPTION
+.B show
+reads from standard input and serves a live, accurate rendering of that
+output over HTTP. It is designed to work with quick commands and long\-running
+streams alike. The browser page uses xterm.js and Server\-Sent Events (SSE)
+to display colors and control sequences.
+.SH OPTIONS
+.TP
+.B \-p \fIPORT\fR
+Port to listen on (default: 8000).
+.TP
+.B \-host \fIADDR\fR
+Interface/address to bind (default: 127.0.0.1).
+.TP
+.B \-title \fITITLE\fR
+Page title shown in the browser (default: "show").
+.TP
+.B \-history \fIBYTES\fR
+Maximum bytes of output retained for replay on connect or reconnect
+(default: 16777216; 0 = unlimited).
+.TP
+.B \-version
+Print version and exit.
+.SH EXAMPLES
+.TP
+Stream a directory listing with colors:
+.nf
+    ls --color=always -la | show -p 8000
+.fi
+.TP
+Stream a long\-running program in batch mode:
+.nf
+    top -b | show -p 8000
+.fi
+Open http://localhost:8000 in a browser to view the output.
+.SH NOTES
+Some commands disable color when stdout is not a TTY. Force color where
+needed (e.g., \fB--color=always\fR). Interactive TUIs that require a TTY
+may not render perfectly unless run in a batch/non\-interactive mode.
+.SH EXIT STATUS
+Returns 0 on success, non\-zero on fatal error.
+.SH HOMEPAGE
+https://github.com/elimelt/show

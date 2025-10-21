@@ -1,0 +1,57 @@
+# GoReleaser configuration to build, package, and publish `show`.
+# Update the `brews` tap owner/name before releasing.
+
+project_name: show
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: show
+    main: ./cmd/show
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+archives:
+  - id: archive
+    builds: [show]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format: tar.gz
+    format_overrides:
+      - goos: windows
+        format: zip
+    files:
+      - src: man/show.1
+        dst: share/man/man1/show.1
+      - LICENSE* # included if present
+      - README*  # included if present
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  name_template: "{{ .Tag }}-next"
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+
+# Note: Do not configure tap publishing here when targeting homebrew-core.
+# Use GoReleaser only to produce tagged source archives and binaries.
+
+release:
+  github:
+    owner: elimelt
+    name: show
+  draft: false
+  prerelease: auto
