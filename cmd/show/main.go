@@ -1,3 +1,5 @@
+// show streams stdin to an HTTP page rendering a terminal.
+// Author: Elijah Melton
 package main
 
 import (
@@ -7,7 +9,6 @@ import (
 	"encoding/base64"
 	"flag"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
@@ -21,15 +22,15 @@ import (
 
 type event struct {
 	data   []byte
-	offset int64 // absolute total bytes after this data appended
+	offset int64
 }
 
 type streamServer struct {
 	mu      sync.RWMutex
 	history []byte
-	base    int64 // absolute offset corresponding to history[0]
-	total   int64 // absolute total bytes seen so far
-	maxHist int   // max bytes to retain; 0 = unlimited
+	base    int64
+	total   int64
+	maxHist int
 	clients map[chan event]struct{}
 	done    bool
 	doneCh  chan struct{}
@@ -47,21 +48,17 @@ func (s *streamServer) append(chunk []byte) {
 	if len(chunk) == 0 {
 		return
 	}
-	// Append to history and snapshot client list with computed offset.
 	s.mu.Lock()
 	s.history = append(s.history, chunk...)
 	s.total += int64(len(chunk))
-	// Enforce max history if set
 	if s.maxHist > 0 && len(s.history) > s.maxHist {
 		drop := len(s.history) - s.maxHist
 		if drop < len(s.history) {
-			// Copy last maxHist bytes into a fresh slice to avoid retaining memory
 			newHist := make([]byte, s.maxHist)
 			copy(newHist, s.history[drop:])
 			s.history = newHist
 			s.base += int64(drop)
 		} else {
-			// In the unlikely event drop >= len(history), reset
 			s.base += int64(len(s.history))
 			s.history = s.history[:0]
 		}
@@ -80,7 +77,6 @@ func (s *streamServer) append(chunk []byte) {
 		select {
 		case ch <- ev:
 		default:
-			// If a client can't keep up, evict it to preserve correctness.
 			s.removeClient(ch)
 		}
 	}
@@ -107,14 +103,8 @@ func (s *streamServer) finish() {
 	s.mu.Unlock()
 }
 
-func (s *streamServer) isDone() bool {
-	s.mu.RLock()
-	d := s.done
-	s.mu.RUnlock()
-	return d
-}
+func (s *streamServer) isDone() bool { s.mu.RLock(); d := s.done; s.mu.RUnlock(); return d }
 
-// writeSSEChunk writes a single SSE "chunk" event with an id and base64 data.
 var bufPool = sync.Pool{New: func() any { return new(bytes.Buffer) }}
 
 func writeSSEChunk(w http.ResponseWriter, flusher http.Flusher, id int64, payload []byte) {
@@ -233,10 +223,6 @@ func newHandler(srv *streamServer, title string) http.Handler {
 			}
 		}
 	})
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		_, _ = w.Write([]byte("ok"))
-	})
 	return mux
 }
 
@@ -262,10 +248,6 @@ func main() {
 	server := &http.Server{Addr: addr, Handler: newHandler(srv, *title), ReadHeaderTimeout: 5 * time.Second}
 	srvErr := make(chan error, 1)
 	go func() {
-		log.Printf("show: serving on http://%s\n", addr)
-		if *host == "0.0.0.0" {
-			log.Printf("show: tip: open http://localhost:%d in your browser\n", *port)
-		}
 		err := server.ListenAndServe()
 		if err != nil && err != http.ErrServerClosed {
 			srvErr <- err
@@ -273,18 +255,9 @@ func main() {
 		close(srvErr)
 	}()
 
-	// Start streaming stdin to server
 	go func() {
 		reader := bufio.NewReader(os.Stdin)
 		buf := make([]byte, 4096)
-
-		// Detect whether stdin is a TTY; if so, there may be no data piped.
-		if fi, err := os.Stdin.Stat(); err == nil {
-			if (fi.Mode() & os.ModeCharDevice) != 0 {
-				log.Printf("show: waiting for input on stdin (pipe something into me)")
-			}
-		}
-
 		for {
 			n, err := reader.Read(buf)
 			if n > 0 {
@@ -293,17 +266,12 @@ func main() {
 				srv.append(chunk)
 			}
 			if err != nil {
-				if err != io.EOF {
-					log.Printf("read error: %v", err)
-				}
 				break
 			}
 		}
 		srv.finish()
-		log.Printf("show: input stream closed; serving recorded output until exit (Ctrl+C)")
 	}()
 
-	// Handle shutdown signals or server errors
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -338,14 +306,8 @@ const indexHTML = `<!doctype html>
     <title>{{TITLE}}</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
     <style>
-      html, body { height: 100%; }
-      body { margin: 0; background: #000; color: #ddd; }
+      html, body { height: 100%; margin: 0; background: #000; }
       #terminal { position: fixed; inset: 0; }
-      .topbar { position: fixed; top: 0; left: 0; right: 0; height: 0; }
-      .xterm * {
-        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-          'Liberation Mono', 'DejaVu Sans Mono', 'Ubuntu Mono', 'Courier New', monospace;
-      }
     </style>
   </head>
   <body>
@@ -373,9 +335,8 @@ const indexHTML = `<!doctype html>
         term.open(el);
         function fit() { try { fitAddon.fit(); } catch (e) {} }
         window.addEventListener('resize', fit);
-        setTimeout(fit, 0);
+        fit();
 
-        // Helpers: base64 -> Uint8Array, then UTF-8 decode with streaming
         function b64ToBytes(b64) {
           const s = atob(b64);
           const out = new Uint8Array(s.length);
@@ -388,7 +349,6 @@ const indexHTML = `<!doctype html>
           if (text) term.write(text);
         }
 
-        // Stream all data (including backlog) via SSE
         const es = new EventSource('/stream');
         es.addEventListener('chunk', (ev) => {
           try {
@@ -397,7 +357,6 @@ const indexHTML = `<!doctype html>
           } catch (e) {}
         });
         es.addEventListener('done', () => { es.close(); });
-        es.onerror = () => { /* ignore transient errors */ };
       })();
     </script>
   </body>

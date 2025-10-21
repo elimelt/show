@@ -1,6 +1,0 @@
-#!/usr/bin/env bash
-set -euo pipefail
-
-# Example: ls --color=always | ./run -p 8000
-go run ./cmd/show "$@"
-
