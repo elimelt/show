@@ -178,7 +178,7 @@ func newHandler(srv *streamServer, title string, allowInput *bool, input *io.Wri
 			http.NotFound(w, r)
 			return
 		}
-		b, _ := io.ReadAll(io.LimitReader(r.Body, 64))
+        b, _ := io.ReadAll(io.LimitReader(r.Body, 4096))
 		if len(b) > 0 {
 			_, _ = (*input).Write(b)
 		}
@@ -455,16 +455,17 @@ const indexHTML = `<!doctype html>
     </style>
   </head>
   <body>
-    <div id="terminal"></div>
+    <div id="terminal" tabindex="0"></div>
     <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.7.0/lib/xterm-addon-fit.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/xterm-addon-unicode11@0.4.0/lib/xterm-addon-unicode11.min.js"></script>
     <script>
       (function(){
+        const INPUT_ENABLED = {{INPUT}};
         const term = new window.Terminal({
           cursorBlink: false,
           convertEol: true,
-          disableStdin: true,
+          disableStdin: !INPUT_ENABLED,
           scrollback: 100000,
           theme: { background: '#000000' }
         });
@@ -501,35 +502,12 @@ const indexHTML = `<!doctype html>
           } catch (e) {}
         });
         es.addEventListener('done', () => { es.close(); });
-
-        const INPUT_ENABLED = {{INPUT}};
         if (INPUT_ENABLED) {
           const enc = new TextEncoder();
-          function send(bytes) { fetch('/input', { method: 'POST', body: bytes }).catch(() => {}); }
-          function ctrl(ch) { const c = ch.toUpperCase().charCodeAt(0) - 64; return (c >= 0 && c <= 31) ? c : null; }
-          function keyToBytes(ev) {
-            if (ev.ctrlKey && ev.key && ev.key.length === 1) {
-              const c = ctrl(ev.key);
-              if (c !== null) return new Uint8Array([c]);
-            }
-            switch (ev.key) {
-              case 'Enter': return enc.encode('\r');
-              case 'Backspace': return new Uint8Array([0x7f]);
-              case 'Tab': return enc.encode('\t');
-              case 'Escape': return new Uint8Array([0x1b]);
-              case 'ArrowUp': return enc.encode('\x1b[A');
-              case 'ArrowDown': return enc.encode('\x1b[B');
-              case 'ArrowRight': return enc.encode('\x1b[C');
-              case 'ArrowLeft': return enc.encode('\x1b[D');
-              default:
-                if (ev.key && ev.key.length === 1) return enc.encode(ev.key);
-            }
-            return null;
-          }
-          document.addEventListener('keydown', (ev) => {
-            const b = keyToBytes(ev);
-            if (b) { ev.preventDefault(); send(b); }
-          });
+          const el = document.getElementById('terminal');
+          try { term.focus(); } catch(e) {}
+          el.addEventListener('click', () => { try { term.focus(); } catch(e) {} });
+          term.onData((data) => { fetch('/input', { method: 'POST', body: enc.encode(data) }).catch(() => {}); });
         }
       })();
     </script>
