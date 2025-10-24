@@ -85,4 +85,3 @@ if ! fetch_and_install "$VERSION" "$OS" "$ARCH"; then
     exit 1
   fi
 fi
-
