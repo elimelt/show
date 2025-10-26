@@ -1,10 +1,13 @@
 # show
 
-Stream any command’s stdout to a browser with accurate terminal rendering.
+Stream any command’s stdout to a browser (with support for most TUIs).
+
+You can and probably should only use this as a read-only view for a long-running process (`<yours> | show`).
+At your own risk, you can also use it bidirectionally (`show -pty -input -- <yours>`)
+
 
 ## Install
 - Go: `go install github.com/elimelt/show/cmd/show@latest`
-- Homebrew (homebrew-core): planned
 - macOS: `curl -fsSL https://raw.githubusercontent.com/elimelt/show/main/install/macos.sh | sudo bash`
 - Linux: `curl -fsSL https://raw.githubusercontent.com/elimelt/show/main/install/linux.sh | sudo bash`
 
